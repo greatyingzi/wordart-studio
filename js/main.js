@@ -1051,80 +1051,431 @@ function downloadStatic(){
   pushHistory('Export: ' + format.toUpperCase() + ' ' + scale + 'x');
 }
 
-/* ── Animation Recording & Export ── */
-async function recordAndExport(durationSec, fps){
-  var totalFrames = Math.ceil(durationSec * fps);
-  var frameInterval = 1000 / fps;
-  var frames = [];
+/* ── Glow pass for offscreen canvas ── */
+function renderGlowPassOnCtx(targetCtx, W, H, simTime){
+  var txt = state.text;
+  var fs = state.fontSize;
+  var ch = txt.split('');
+  targetCtx.font = state.fontWeight + ' ' + fs + 'px "' + state.fontFamily + '"';
+  targetCtx.textAlign = 'center';
+  targetCtx.textBaseline = 'middle';
 
-  pushHistory('Rendering ' + totalFrames + ' frames at ' + fps + 'fps...');
+  var wid = ch.map(function(d){ return targetCtx.measureText(d).width; });
+  var totalW = 0;
+  for(var j = 0; j < wid.length; j++) totalW += wid[j];
+  totalW += state.letterSpacing * Math.max(0, ch.length - 1);
 
-  for(var i = 0; i < totalFrames; i++){
-    var simTime = i / fps;
-
-    // Render to offscreen canvas
-    var offscreen = document.createElement('canvas');
-    offscreen.width = canvas.width;
-    offscreen.height = canvas.height;
-    var octx = offscreen.getContext('2d');
-
-    // Swap ctx temporarily
-    var origCtx = ctx;
-    // We need to use the same rendering but on offscreen canvas
-    // Since our render functions use global ctx, we swap:
-    var savedCtx = window.ctx_backup || ctx;
-
-    // Actually, let's just save the state and render normally
-    // But use the offscreen canvas
-    // The simplest approach: render to offscreen, capture, restore main canvas
-    // We need to make ctx point to octx temporarily
-
-    // Better approach: duplicate the render pipeline to accept a context param
-    // For now, since renderFrame uses global ctx, let's use a different strategy:
-    // Render to main canvas (hidden from user during export), then capture
-
-    // Actually best approach: save, swap, render, capture, restore
-    // But particles mutate state. Let's just render directly to main canvas.
-
-    // Simplest: render to main canvas at simTime, capture, then restore live view
-    drawBackground(simTime);
-    drawParticles(simTime);
-    renderFrame(simTime);
-
-    frames.push(canvas.toDataURL('image/png', 0.92));
-
-    // Show progress
-    var pct = Math.round(i / totalFrames * 100);
-    document.getElementById('infoFPS').textContent = 'Exporting ' + pct + '%';
+  var c1 = state.col1, c2 = state.col2;
+  if(state.animPreset === 'rainbow'){
+    var h1 = (simTime * 80 * state.speed) % 360;
+    var h2 = (h1 + 180) % 360;
+    c1 = hsl(h1, 100, 55);
+    c2 = hsl(h2, 100, 55);
   }
 
-  // Restore live view
-  requestAnimationFrame(function(){
-    drawBackground(performance.now()/1000 - startTime/1000);
-    drawParticles(performance.now()/1000 - startTime/1000);
-    renderFrame((performance.now() - startTime) / 1000);
-  });
+  for(var i = 0; i < ch.length; i++){
+    var px, py, ang = 0;
+    var t = (i + 0.5) / ch.length;
 
-  return frames;
-}
+    switch(state.curve){
+      case 'none': {
+        var rx = W/2 - totalW/2;
+        px = rx + wid[i]/2;
+        for(var jj = 0; jj < i; jj++) rx += wid[jj] + state.letterSpacing;
+        px = rx + wid[i]/2;
+        py = H/2;
+        break;
+      }
+      case 'arch': {
+        ang = -Math.sin(t*Math.PI)*state.curvature;
+        px = W/2+(i-(ch.length-1)/2)*(wid[i]*0.6+state.letterSpacing*0.6);
+        py = H/2-Math.sin(t*Math.PI)*state.amplitude;
+        break;
+      }
+      case 'wave': {
+        ang = Math.sin(t*Math.PI*state.waveFreq+simTime*state.speed*2)*state.curvature;
+        px = W/2+(i-(ch.length-1)/2)*(wid[i]*0.6+state.letterSpacing*0.6);
+        py = H/2+Math.sin(t*Math.PI*state.waveFreq+simTime*state.speed*2)*state.amplitude;
+        break;
+      }
+      case 'coil': {
+        var rad = state.coilRadius;
+        var sa = Math.PI;
+        var sw = state.coilSweep*Math.PI/180;
+        var a = sa+t*sw;
+        px = W/2+Math.cos(a)*rad;
+        py = H/2+Math.sin(a)*rad;
+        ang = a+Math.PI/2;
+        break;
+      }
+      case 'bounce': {
+        var rb = W/2-totalW/2;
+        px = rb+wid[i]/2;
+        for(var kb=0;kb<i;kb++) rb+=wid[kb]+state.letterSpacing;
+        px = rb+wid[i]/2;
+        py = H/2-Math.abs(Math.sin(simTime*2*state.speed+i*0.4))*state.bounceHeight;
+        break;
+      }
+      case 'pulse': {
+        var rp = W/2-totalW/2;
+        px = rp+wid[i]/2;
+        for(var kp=0;kp<i;kp++) rp+=wid[kp]+state.letterSpacing;
+        px = rp+wid[i]/2;
+        py = H/2;
+        ang = Math.sin(simTime*3*state.speed+i*0.3)*0.05;
+        break;
+      }
+      default: {
+        var rn = W/2-totalW/2;
+        px = rn+wid[i]/2;
+        for(var kn=0;kn<i;kn++) rn+=wid[kn]+state.letterSpacing;
+        px = rn+wid[i]/2;
+        py = H/2;
+      }
+    }
 
-async function downloadAnimation(){
-  var format = document.getElementById('formatGroup').querySelector('.chip.selected').dataset.format;
-  var duration = +document.getElementById('ctrlDuration').value;
-  var fps = +document.getElementById('ctrlFPS').value;
+    targetCtx.save();
+    targetCtx.translate(px, py);
+    targetCtx.rotate(ang);
 
-  document.getElementById('modalBackdrop').classList.remove('open');
-  pushHistory('Starting ' + format + ' export...');
+    var grd;
+    if(state.gradDir==='h') grd=targetCtx.createLinearGradient(-fs,0,fs,0);
+    else if(state.gradDir==='v') grd=targetCtx.createLinearGradient(0,-fs,0,fs);
+    else if(state.gradDir==='radial') grd=targetCtx.createRadialGradient(0,0,0,0,0,fs);
+    else grd=targetCtx.createLinearGradient(-fs,-fs,fs,fs);
+    grd.addColorStop(0,c1);
+    grd.addColorStop(1,c2);
+    targetCtx.fillStyle=grd;
+    targetCtx.fillText(ch[i],0,0);
 
-  if(format === 'gif'){
-    exportGIF(duration, fps);
-  } else if(format === 'mp4'){
-    exportVideo(duration, fps);
+    if(state.outlineWidth>0){
+      targetCtx.strokeStyle=state.outlineColor;
+      targetCtx.lineWidth=state.outlineWidth;
+      targetCtx.strokeText(ch[i],0,0);
+    }
+    targetCtx.restore();
   }
 }
-window.downloadAnimation = downloadAnimation;
 
-/* ── GIF Export ── */
+/* ── Progress bar ── */
+var progressBarEl = null;
+
+function showProgress(message){
+  if(progressBarEl) return;
+  progressBarEl = document.createElement('div');
+  progressBarEl.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,10,20,0.92);padding:30px 40px;border-radius:16px;z-index:2000;color:#e0e0e0;font-family:sans-serif;text-align:center;width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+  progressBarEl.innerHTML = '<div id="progTitle" style="font-size:16px;margin-bottom:14px;"></div><div style="height:4px;background:#2a2a44;border-radius:2px;overflow:hidden;"><div id="progBar" style="height:100%;width:0%;background:#8ab4f8;border-radius:2px;transition:width 0.15s;"></div></div><div id="progSub" style="font-size:12px;color:#888;margin-top:10px;"></div>';
+  document.getElementById('stage').appendChild(progressBarEl);
+  document.getElementById('progTitle').textContent = message;
+}
+
+function updateProgress(current, total, msg){
+  if(!progressBarEl) return;
+  var pct = Math.round(current / total * 100);
+  document.getElementById('progBar').style.width = pct + '%';
+  if(msg) document.getElementById('progSub').textContent = msg;
+  else document.getElementById('progSub').textContent = current + '/' + total + ' frames';
+}
+
+function hideProgress(){
+  if(progressBarEl){
+    progressBarEl.parentNode && progressBarEl.parentNode.removeChild(progressBarEl);
+    progressBarEl = null;
+  }
+}
+
+/* ── Async yield — let the browser breathe between frames ── */
+function yieldMs(ms){
+  ms = ms || 1;
+  return new Promise(function(resolve){ setTimeout(resolve, ms); });
+}
+
+/* ── Render a single frame to an offscreen canvas at given simulated time ── */
+function renderFrameToCanvas(targetCtx, W, H, simTime){
+  var txt = state.text;
+  var fs = state.fontSize;
+  var ch = txt.split('');
+
+  targetCtx.font = state.fontWeight + ' ' + fs + 'px "' + state.fontFamily + '"';
+  targetCtx.textAlign = 'center';
+  targetCtx.textBaseline = 'middle';
+
+  var wid = ch.map(function(d){ return targetCtx.measureText(d).width; });
+  var totalW = 0;
+  for(var j = 0; j < wid.length; j++) totalW += wid[j];
+  totalW += state.letterSpacing * Math.max(0, ch.length - 1);
+
+  var gradShift = (simTime * 0.08 * state.speed) % 1;
+
+  var c1 = state.col1, c2 = state.col2;
+  if(state.animPreset === 'rainbow'){
+    var h1 = (simTime * 80 * state.speed) % 360;
+    var h2 = (h1 + 180) % 360;
+    c1 = hsl(h1, 100, 55);
+    c2 = hsl(h2, 100, 55);
+  }
+
+  var flickMul = 1;
+  if(state.animPreset === 'flicker'){
+    flickMul = 0.8 + Math.sin(simTime * 12) * state.flickerIntensity + Math.sin(simTime * 7.3) * state.flickerIntensity;
+  }
+
+  var shakeX = 0, shakeY = 0;
+  if(state.animPreset === 'shake'){
+    shakeX = Math.sin(simTime * 15 * state.speed) * 3;
+    shakeY = Math.cos(simTime * 13 * state.speed) * 2;
+  }
+
+  var glitchX = 0;
+  if(state.animPreset === 'glitch'){
+    if(Math.sin(simTime * 25) > 0.95) glitchX = (Math.random() - 0.5) * 20;
+  }
+
+  var spinRot = 0;
+  if(state.animPreset === 'spin' && state.curve === 'coil'){
+    spinRot = simTime * 0.3 * state.speed;
+  }
+
+  var coilRotBase = 0;
+  if(state.curve === 'coil' && state.animPreset !== 'spin'){
+    coilRotBase = simTime * 0.15 * state.speed;
+  }
+
+  for(var i = 0; i < ch.length; i++){
+    var px, py, ang = 0;
+    var t = (i + 0.5) / ch.length;
+    var rotDeg = state.rotationOffset * Math.PI / 180;
+
+    switch(state.curve){
+      case 'none': {
+        var rx = W/2 - totalW/2;
+        px = rx + wid[i]/2;
+        for(var jj = 0; jj < i; jj++) rx += wid[jj] + state.letterSpacing;
+        px = rx + wid[i]/2;
+        py = H/2;
+        if(state.animPreset === 'bounce'){
+          py -= Math.abs(Math.sin(simTime * 2 * state.speed + i * 0.4)) * state.bounceHeight;
+        }
+        if(state.animPreset === 'pulse'){
+          ang = Math.sin(simTime * 3 * state.speed + i * 0.3) * 0.05;
+        }
+        break;
+      }
+      case 'arch': {
+        var ca = state.curvature;
+        var amp = state.amplitude;
+        ang = -Math.sin(t * Math.PI) * ca + rotDeg;
+        px = W/2 + (i - (ch.length-1)/2) * (wid[i]*0.6 + state.letterSpacing*0.6);
+        py = H/2 - Math.sin(t * Math.PI) * amp;
+        break;
+      }
+      case 'arc': {
+        ang = Math.sin(t * Math.PI) * state.curvature + rotDeg;
+        px = W/2 + (i - (ch.length-1)/2) * (wid[i]*0.6 + state.letterSpacing*0.6);
+        py = H/2 + Math.sin(t * Math.PI) * state.amplitude;
+        break;
+      }
+      case 'wave': {
+        var wspeed = state.speed;
+        ang = Math.sin(t * Math.PI * state.waveFreq + simTime * wspeed * 2) * state.curvature;
+        px = W/2 + (i - (ch.length-1)/2) * (wid[i]*0.6 + state.letterSpacing*0.6);
+        py = H/2 + Math.sin(t * Math.PI * state.waveFreq + simTime * wspeed * 2) * state.amplitude;
+        break;
+      }
+      case 'slant': {
+        ang = 0.25 + rotDeg;
+        px = W/2 + (i - (ch.length-1)/2) * (wid[i]*0.6 + state.letterSpacing*0.6);
+        py = H/2 + (i - (ch.length-1)/2) * 8;
+        break;
+      }
+      case 'coil': {
+        var rad = state.coilRadius;
+        var sa = Math.PI + coilRotBase;
+        var sw = state.coilSweep * Math.PI / 180;
+        var a = sa + t * sw + spinRot;
+        px = W/2 + Math.cos(a) * rad;
+        py = H/2 + Math.sin(a) * rad;
+        ang = a + Math.PI/2;
+        break;
+      }
+      case 'bounce': {
+        var rb = W/2 - totalW/2;
+        px = rb + wid[i]/2;
+        for(var kb = 0; kb < i; kb++) rb += wid[kb] + state.letterSpacing;
+        px = rb + wid[i]/2;
+        py = H/2 - Math.abs(Math.sin(simTime * 2 * state.speed + i * 0.4)) * state.bounceHeight;
+        break;
+      }
+      case 'pulse': {
+        var rp = W/2 - totalW/2;
+        px = rp + wid[i]/2;
+        for(var kp = 0; kp < i; kp++) rp += wid[kp] + state.letterSpacing;
+        px = rp + wid[i]/2;
+        py = H/2;
+        ang = Math.sin(simTime * 3 * state.speed + i * 0.3) * 0.05;
+        break;
+      }
+      case 'shake': {
+        var rs = W/2 - totalW/2;
+        px = rs + wid[i]/2;
+        for(var ks = 0; ks < i; ks++) rs += wid[ks] + state.letterSpacing;
+        px = rs + wid[i]/2 + (Math.random()-0.5)*4;
+        py = H/2 + (Math.random()-0.5)*3;
+        break;
+      }
+      default: {
+        var rn = W/2 - totalW/2;
+        px = rn + wid[i]/2;
+        for(var kn = 0; kn < i; kn++) rn += wid[kn] + state.letterSpacing;
+        px = rn + wid[i]/2;
+        py = H/2;
+      }
+    }
+
+    px += shakeX + glitchX;
+    py += shakeY;
+
+    targetCtx.save();
+    targetCtx.translate(px, py);
+    targetCtx.rotate(ang);
+
+    for(var s = state.depth; s >= 1; s--){
+      targetCtx.fillStyle = shadeColor(state.outlineColor, -20 * (s / state.depth));
+      targetCtx.fillText(ch[i], s, s);
+    }
+
+    var grd;
+    if(state.gradDir === 'radial'){
+      grd = targetCtx.createRadialGradient(0, 0, 0, 0, 0, fs);
+    } else if(state.gradDir === 'h'){
+      grd = targetCtx.createLinearGradient(-fs, 0, fs, 0);
+    } else if(state.gradDir === 'v'){
+      grd = targetCtx.createLinearGradient(0, -fs, 0, fs);
+    } else {
+      grd = targetCtx.createLinearGradient(-fs, -fs, fs, fs);
+    }
+    grd.addColorStop(((0 + gradShift) % 1 + 1) % 1, c1);
+    grd.addColorStop(1, c2);
+    targetCtx.fillStyle = grd;
+    targetCtx.fillText(ch[i], 0, 0);
+
+    if(state.outlineWidth > 0){
+      targetCtx.strokeStyle = state.outlineColor;
+      targetCtx.lineWidth = state.outlineWidth;
+      targetCtx.strokeText(ch[i], 0, 0);
+    }
+
+    targetCtx.restore();
+  }
+
+  // Glow pass
+  if(state.glowEnabled && state.glowBlur > 0){
+    targetCtx.save();
+    targetCtx.filter = 'blur(' + state.glowBlur + 'px)';
+    targetCtx.globalAlpha = state.glowAlpha * flickMul;
+    renderGlowPassOnCtx(targetCtx, W, H, simTime);
+    targetCtx.restore();
+  }
+}
+
+function renderBGOnCtx(targetCtx, W, H, time){
+  var r,g,b;
+  try {
+    var tmp = document.createElement('canvas').getContext('2d');
+    tmp.fillStyle = state.bgColor;
+    tmp.fillRect(0,0,1,1);
+    var data = tmp.getImageData(0,0,1,1).data;
+    r=data[0]; g=data[1]; b=data[2];
+  } catch(e) { r=10; g=10; b=20; }
+
+  var bgGrad = targetCtx.createRadialGradient(W/2,H/2,0,W/2,H/2,W/2);
+  bgGrad.addColorStop(0, 'rgb('+Math.round(r*1.2)+','+Math.round(g*1.2)+','+Math.round(b*1.2)+')');
+  bgGrad.addColorStop(1, 'rgb('+Math.round(r*0.5)+','+Math.round(g*0.5)+','+Math.round(b*0.5)+')');
+  targetCtx.fillStyle = bgGrad;
+  targetCtx.fillRect(0, 0, W, H);
+
+  if(state.bgGridEnabled){
+    targetCtx.strokeStyle = 'rgba(255,0,255,0.08)';
+    targetCtx.lineWidth = 1;
+    var gridOff = (time * 15 * state.speed) % 12;
+    for(var gx=0; gx<W; gx+=25){
+      targetCtx.beginPath();
+      targetCtx.moveTo(gx, H/2+10);
+      targetCtx.lineTo(gx-(gx-W/2)*0.4, H);
+      targetCtx.stroke();
+    }
+    for(var gy=H/2+10+gridOff; gy<H; gy+=12){
+      targetCtx.beginPath();
+      targetCtx.moveTo(0,gy); targetCtx.lineTo(W,gy);
+      targetCtx.stroke();
+    }
+    var sunSize = 45 + Math.sin(time*2)*5;
+    var sunG = targetCtx.createLinearGradient(W/2,H/2-sunSize,W/2,H/2);
+    sunG.addColorStop(0,'#ff0080');
+    sunG.addColorStop(1,'#ffdd00');
+    targetCtx.fillStyle = sunG;
+    targetCtx.beginPath();
+    targetCtx.arc(W/2, H/2-20, sunSize, 0, Math.PI);
+    targetCtx.fill();
+    for(var sl=H/2-20; sl<H/2-20+sunSize; sl+=5){
+      targetCtx.fillStyle='rgba(10,0,21,0.5)';
+      targetCtx.fillRect(W/2-sunSize, sl, sunSize*2, 2);
+    }
+  }
+
+  if(state.scanlinesEnabled){
+    targetCtx.fillStyle = 'rgba(0,0,0,0.05)';
+    for(var sy=0; sy<H; sy+=3){
+      targetCtx.fillRect(0, sy, W, 1);
+    }
+  }
+
+  if(state.animPreset === 'shake'){
+    var flashA = Math.max(0, Math.sin(time*4*state.speed)*0.04);
+    targetCtx.fillStyle = 'rgba(255,255,255,'+flashA+')';
+    targetCtx.fillRect(0,0,W,H);
+  }
+}
+
+/* ── Full frame render to arbitrary canvas ── */
+function renderFullFrame(targetCanvas, simTime){
+  var tc = targetCanvas.getContext('2d');
+  var W = targetCanvas.width;
+  var H = targetCanvas.height;
+
+  renderBGOnCtx(tc, W, H, simTime);
+
+  // Particles (seeded by time for determinism)
+  if(state.particlesEnabled){
+    for(var i = 0; i < Math.min(state.particleCount, 60); i++){
+      var seed = i * 137.508 + simTime * 50;
+      var px = ((seed * 7.31) % W + W) % W;
+      var py = ((seed * 13.7) % H + H) % H;
+      var sz = 1 + (seed % 2);
+      var alpha = 0.15 + Math.sin(seed * 0.3) * 0.15;
+      if(state.particleType === 'embers'){
+        alpha = 0.2 + Math.sin(seed * 0.5) * 0.15;
+      } else if(state.particleType === 'snow'){
+        alpha = 0.25 + Math.sin(seed * 0.2) * 0.1;
+      }
+      tc.fillStyle = 'rgba(200,230,255,' + alpha.toFixed(2) + ')';
+      if(state.particleType === 'embers'){
+        tc.fillStyle = 'rgba(255,' + Math.round(120+Math.sin(seed)*60) + ',0,' + alpha.toFixed(2) + ')';
+      }
+      if(state.particleType === 'stars'){
+        drawStar(tc, px, py, 4, sz, sz*0.6, 'rgba(255,255,255,' + alpha.toFixed(2) + ')');
+      } else {
+        tc.beginPath();
+        tc.arc(px, py, sz, 0, Math.PI*2);
+        tc.fill();
+      }
+    }
+  }
+
+  renderFrameToCanvas(tc, W, H, simTime);
+}
+
+/* ── GIF Export (non-blocking) ── */
 async function exportGIF(duration, fps){
   if(!window.GIF || !window._gifReady){
     pushHistory('Error: gif.js library not loaded yet. Please wait and try again.');
@@ -1132,32 +1483,39 @@ async function exportGIF(duration, fps){
   }
 
   var totalFrames = Math.ceil(duration * fps);
+  var W = canvas.width, H = canvas.height;
+
+  showProgress('Generating GIF...');
+  updateProgress(0, totalFrames, 'Preparing...');
+
+  var offscreen = document.createElement('canvas');
+  offscreen.width = W;
+  offscreen.height = H;
+
   var gif = new GIF({
     workers: 2,
     quality: 10,
-    width: canvas.width,
-    height: canvas.height,
+    width: W,
+    height: H,
     workerScript: 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js'
   });
 
-  pushHistory('Rendering GIF: ' + totalFrames + ' frames...');
-
   for(var i = 0; i < totalFrames; i++){
     var simTime = i / fps;
-
-    drawBackground(simTime);
-    drawParticles(simTime);
-    renderFrame(simTime);
-
-    var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    renderFullFrame(offscreen, simTime);
+    var imgData = offscreen.getContext('2d').getImageData(0, 0, W, H);
     gif.addFrame(imgData, {delay: 1000/fps});
 
-    var pct = Math.round(i / totalFrames * 100);
-    document.getElementById('infoFPS').textContent = 'GIF ' + pct + '%';
+    updateProgress(i + 1, totalFrames, 'Frame ' + (i+1) + '/' + totalFrames);
+
+    // Yield every 5 frames to prevent blocking
+    if(i % 5 === 4) await yieldMs(0);
   }
 
+  updateProgress(totalFrames, totalFrames, 'Encoding GIF...');
+
   gif.on('finished', function(blob){
-    document.getElementById('infoFPS').textContent = '60 FPS';
+    hideProgress();
     var link = document.createElement('a');
     link.download = 'wordart.gif';
     link.href = URL.createObjectURL(blob);
@@ -1169,15 +1527,15 @@ async function exportGIF(duration, fps){
   gif.render();
 }
 
-/* ── MP4/Video Export ── */
+/* ── MP4/Video Export (non-blocking via offscreen canvas) ── */
 async function exportVideo(duration, fps){
   var totalFrames = Math.ceil(duration * fps);
+  var W = canvas.width, H = canvas.height;
 
-  // Use MediaRecorder with OffscreenCanvas if available, otherwise stream capture
-  // Approach: render all frames to a MediaStream via canvas.captureStream
-  var stream = canvas.captureStream(fps);
+  showProgress('Generating Video...');
+  updateProgress(0, totalFrames, 'Preparing...');
 
-  // Check supported MIME types
+  // Determine mime type
   var mimeType = 'video/webm;codecs=vp9';
   if(MediaRecorder.isTypeSupported('video/mp4')){
     mimeType = 'video/mp4';
@@ -1187,6 +1545,12 @@ async function exportVideo(duration, fps){
     mimeType = 'video/webm';
   }
 
+  // Use offscreen canvas for recording
+  var offscreen = document.createElement('canvas');
+  offscreen.width = W;
+  offscreen.height = H;
+
+  var stream = offscreen.captureStream(fps);
   var recorder = new MediaRecorder(stream, {
     mimeType: mimeType,
     videoBitsPerSecond: 5000000
@@ -1198,7 +1562,7 @@ async function exportVideo(duration, fps){
   };
 
   recorder.onstop = function(){
-    document.getElementById('infoFPS').textContent = '60 FPS';
+    hideProgress();
     var blob = new Blob(chunks, {type: mimeType});
     var ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
     var link = document.createElement('a');
@@ -1211,34 +1575,54 @@ async function exportVideo(duration, fps){
 
   recorder.start();
 
-  // Render frames at precise timing
-  var frameDelay = 1000 / fps;
   var frameIndex = 0;
-
-  pushHistory('Rendering video: ' + totalFrames + ' frames...');
 
   function renderNextFrame(){
     if(frameIndex >= totalFrames){
-      recorder.stop();
+      // Small delay to let recorder flush remaining data
+      setTimeout(function(){ recorder.stop(); }, 200);
       return;
     }
 
     var simTime = frameIndex / fps;
-
-    drawBackground(simTime);
-    drawParticles(simTime);
-    renderFrame(simTime);
+    renderFullFrame(offscreen, simTime);
 
     frameIndex++;
+    updateProgress(frameIndex, totalFrames, 'Frame ' + frameIndex + '/' + totalFrames);
 
-    var pct = Math.round(frameIndex / totalFrames * 100);
-    document.getElementById('infoFPS').textContent = 'Video ' + pct + '%';
-
-    setTimeout(renderNextFrame, frameDelay);
+    // Yield every 3 frames
+    if(frameIndex % 3 === 0){
+      setTimeout(renderNextFrame, 0);
+    } else {
+      renderNextFrame();
+    }
   }
 
-  // Start rendering after recorder is ready
-  setTimeout(renderNextFrame, 100);
+  setTimeout(renderNextFrame, 50);
+}
+
+/* ── Animation Recording & Export ── */
+async function recordAndExport(durationSec, fps){
+  var totalFrames = Math.ceil(durationSec * fps);
+  var frames = [];
+
+  showProgress('Rendering...');
+  updateProgress(0, totalFrames, 'Preparing...');
+
+  var offscreen = document.createElement('canvas');
+  offscreen.width = canvas.width;
+  offscreen.height = canvas.height;
+
+  for(var i = 0; i < totalFrames; i++){
+    var simTime = i / fps;
+    renderFullFrame(offscreen, simTime);
+    frames.push(offscreen.toDataURL('image/png', 0.92));
+    updateProgress(i + 1, totalFrames);
+    if(i % 5 === 4) await yieldMs(0);
+  }
+
+  hideProgress();
+  return frames;
 }
 
 
