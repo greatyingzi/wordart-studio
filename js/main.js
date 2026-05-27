@@ -68,6 +68,19 @@ document.addEventListener('DOMContentLoaded', function(){
   initParticles(state.particleCount);
   resize();
   window.addEventListener('resize', resize);
+
+  // Watch for stage size changes (more reliable than window resize alone)
+  var ro = new ResizeObserver(resize);
+  ro.observe(document.getElementById('stage'));
+
+  // Force re-render after layout settles (handles cases where CSS/fonts delay sizing)
+  requestAnimationFrame(function(){
+    resize();
+    drawBackground(0);
+    drawParticles(0);
+    renderFrame(0);
+  });
+
   pushHistory('Initialized');
   requestAnimationFrame(loop);
 });
@@ -550,8 +563,15 @@ function drawStar(c, cx, cy, spikes, outerR, innerR, color){
 /* ── Resize ── */
 function resize(){
   var stage = document.getElementById('stage');
-  canvas.width = stage.clientWidth;
-  canvas.height = stage.clientHeight;
+  var w = stage.clientWidth;
+  var h = stage.clientHeight;
+  // Safety: if layout isn't ready yet, use viewport fallback
+  if(w <= 0) w = Math.floor(window.innerWidth * 0.5);
+  if(h <= 0) h = Math.floor(window.innerHeight * 0.6);
+  if(canvas.width !== w || canvas.height !== h){
+    canvas.width = w;
+    canvas.height = h;
+  }
 }
 
 /* ── Render helpers ── */
@@ -760,6 +780,8 @@ function renderFrame(simTime){
     ctx.filter = 'blur(' + state.glowBlur + 'px)';
     ctx.globalAlpha = state.glowAlpha * flickMul;
     redrawGlowPass(simTime);
+    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
     ctx.restore();
   }
 }
