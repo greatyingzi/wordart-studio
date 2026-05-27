@@ -1,34 +1,45 @@
 # WordArt Studio
 
-A powerful, fully customizable WordArt generator — create stunning animated text effects with full control over typography, colors, curves, animations, and visual effects.
+A powerful, fully customizable WordArt generator — create stunning animated text effects with full control over typography, colors, curves, animations, and visual effects. Export as static images or animations (GIF, MP4/WebM).
 
-![WordArt Studio Preview](preview.png)
+![WordArt Studio](preview.png)
 
 ## Features
 
+### Visual Creation
 - **12 Built-in Presets** — Rainbow, Neon, Fire, Ice, Chrome, Dream, Retro, Power, Nature, Sky, Sunset, Matrix
 - **9 Curve Types** — Straight, Arch, Arc, Wave, Slant, Coil, Bounce, Pulse, Shake
 - **9 Animation Modes** — Idle, Wave, Bounce, Spin, Pulse, Flicker, Shake, Glitch, Rainbow
-- **Fully Customizable** — Every parameter exposed: font, size, spacing, colors, gradient direction, outline, extrusion depth, speeds, particle types/count
-- **High-Res Export** — PNG/JPG/WEBP at 1x/2x/4x scale
-- **Share Configurations** — Encode your settings into a URL to share with anyone
-- **Undo/Redo** — Full history stack with Ctrl+Z / Ctrl+Y support
-- **Keyboard Shortcuts** — Ctrl+S to quick-export
+- **4 Particle Systems** — Stars, Embers, Snow, Dots (adjustable count)
+- **Visual Effects** — Glow (blur/opacity), perspective grid, scanlines
+- **Full Typography Control** — 8 fonts, size, weight, letter spacing
+- **Rich Styling** — Dual-color gradients (4 directions), outline color/width, 3D extrusion depth
+
+### Export Formats
+- **Static Images** — PNG, JPG, WEBP at 1x/2x/4x resolution
+- **GIF** — Animated GIF with configurable duration (1-10s) and FPS (10-60)
+- **MP4/WebM** — Video export via MediaRecorder API (VP9/H.264 codec)
+- **Live Recording** — Click Record to capture real-time animation, then export
+
+### Workflow
+- **Undo/Redo** — Full history stack (Ctrl+Z / Ctrl+Y)
+- **Share Configurations** — Encode settings into a URL to share
+- **Keyboard Shortcuts** — Space to record, Ctrl+S to export
+- **Responsive** — Works on desktop and mobile
 
 ## Tech Stack
 
-Zero dependencies. Pure HTML + CSS + vanilla JavaScript with Canvas 2D rendering.
+**Zero build dependencies.** Pure HTML + CSS + vanilla JavaScript with Canvas 2D.
 
-- Real-time 60fps Canvas animation
-- CSS custom properties for theming
-- Responsive layout (desktop panels collapse on mobile)
+External libraries (loaded at runtime from CDN):
+- [gif.js](https://github.com/jnordberg/gif.js) — GIF encoding (only loaded when exporting GIF)
 
-## Development
+## Local Development
 
 Just open `index.html` in any modern browser. No build step needed.
 
 ```bash
-# Quick local server (optional)
+# Optional: local server for better experience
 npx serve .
 # or
 python3 -m http.server 8080
@@ -36,29 +47,26 @@ python3 -m http.server 8080
 
 ## Deployment
 
-### Cloudflare Pages (Recommended)
+### Cloudflare Pages
 
-1. Push code to GitHub
-2. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → Workers & Pages → Create Page
-3. Connect your GitHub repository
+1. Push to GitHub
+2. Cloudflare Dashboard → Workers & Pages → Create Page
+3. Connect GitHub repository
 4. Framework preset: **Other**
-5. Build command: leave blank (static site)
+5. Build command: (leave blank)
 6. Output directory: `/`
 
-That's it — Cloudflare Pages serves static files directly, no build step needed.
+### GitHub Pages
 
-### Netlify Alternative
+Already configured — enabled via `Settings → Pages → Source: main branch`.
 
-Same flow — connect repo, publish dir: `/`, no build command.
+Visit: https://greatyingzi.github.io/wordart-studio/
 
-## Usage Guide
+## Browser Support
 
-1. Select a **preset** from the Style tab, or start from scratch
-2. Adjust **text** (content, font, size, spacing, weight)
-3. Choose a **curve** shape and tweak curvature/amplitude
-4. Pick an **animation** mode and adjust speed/frequency
-5. Enable **effects** (glow, particles, grid, scanlines)
-6. Hit **Export** to download, or **Share** to get a URL
+- Static export: All browsers with Canvas 2D
+- GIF export: Requires gif.js to load from CDN (Chrome, Firefox, Edge, Safari)
+- Video export: Requires `MediaRecorder` + `captureStream` (Chrome, Edge, Firefox; Safari limited)
 
 ## License
 

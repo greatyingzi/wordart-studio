@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════
-   WordArt Studio - Main Application
+   WordArt Studio - Core + Animation Engine
    ═══════════════════════════════════════ */
 
 (function(){
@@ -37,6 +37,8 @@ var state = {
   bgGridEnabled: false,
   scanlinesEnabled: false,
   bgColor: '#0a0a14',
+  exportDuration: 3,
+  exportFPS: 30,
 };
 
 var undoStack = [];
@@ -46,13 +48,11 @@ var particles = [];
 
 /* ── DOM refs ── */
 var canvas, ctx;
-var ctrlText, ctrlFont, ctrlSize, ctrlLSpace;
-var ctrlCol1, ctrlCol2, ctrlOutline, ctrlOWidth, ctrlDepth;
-var ctrlCurv, ctrlAmp, ctrlRotOff, ctrlRad, ctrlSweep;
-var ctrlSpeed, ctrlFreq, ctrlBounce, ctrlFlick;
-var ctrlGlow, ctrlGBlur, ctrlGAlpha;
-var ctrlParticles, ctrlPType, ctrlPCnt;
-var ctrlBgGrid, ctrlSyncLines;
+
+/* ── Recording state ── */
+var recording = false;
+var recordedFrames = [];
+var recordedStartTime = 0;
 
 /* ── Init ── */
 document.addEventListener('DOMContentLoaded', function(){
@@ -99,6 +99,10 @@ function bindDOM(){
   ctrlPCnt = document.getElementById('ctrlPCnt');
   ctrlBgGrid = document.getElementById('ctrlBgGrid');
   ctrlSyncLines = document.getElementById('ctrlScanlines');
+  ctrlDuration = document.getElementById('ctrlDuration');
+  ctrlFPS = document.getElementById('ctrlFPS');
+  if(ctrlDuration){ ctrlDuration.value = state.exportDuration || 3; updateLabel('valDuration', ctrlDuration.value); }
+  if(ctrlFPS){ ctrlFPS.value = state.exportFPS || 30; updateLabel('valFPS', ctrlFPS.value); }
 }
 
 /* ── Presets ── */
@@ -280,6 +284,8 @@ function bindEvents(){
   ctrlFreq.addEventListener('input', function(){ snapshotState(); state.waveFreq = +this.value; updateLabel('valFreq', this.value); });
   ctrlBounce.addEventListener('input', function(){ snapshotState(); state.bounceHeight = +this.value; updateLabel('valBounce', this.value); });
   ctrlFlick.addEventListener('input', function(){ snapshotState(); state.flickerIntensity = +this.value; updateLabel('valFlick', parseFloat(this.value).toFixed(2)); });
+  ctrlDuration.addEventListener('input', function(){ state.exportDuration = +this.value; updateLabel('valDuration', this.value); });
+  ctrlFPS.addEventListener('input', function(){ state.exportFPS = +this.value; updateLabel('valFPS', this.value); });
 
   // FX
   ctrlGlow.addEventListener('change', function(){ state.glowEnabled = this.checked; });
@@ -296,6 +302,7 @@ function bindEvents(){
   document.getElementById('btnUndo').addEventListener('click', undo);
   document.getElementById('btnRedo').addEventListener('click', redo);
   document.getElementById('btnExport').addEventListener('click', function(){ document.getElementById('modalBackdrop').classList.add('open'); });
+  document.getElementById('btnRecord').addEventListener('click', toggleRecording);
   document.getElementById('btnShare').addEventListener('click', shareConfig);
 
   // Modal close
@@ -306,19 +313,24 @@ function bindEvents(){
     if(e.target === this) this.classList.remove('open');
   });
 
-  // Export settings
+  // Export format selection
   document.getElementById('formatGroup').querySelectorAll('.chip').forEach(function(chip){
     chip.addEventListener('click', function(){
       document.getElementById('formatGroup').querySelectorAll('.chip').forEach(function(c){ c.classList.remove('selected'); });
       chip.classList.add('selected');
+      updateExportOptions();
     });
   });
+
+  // Scale
   document.getElementById('scaleGroup').querySelectorAll('.chip').forEach(function(chip){
     chip.addEventListener('click', function(){
       document.getElementById('scaleGroup').querySelectorAll('.chip').forEach(function(c){ c.classList.remove('selected'); });
       chip.classList.add('selected');
     });
   });
+
+  // BG mode
   document.getElementById('bgModeGroup').querySelectorAll('.chip').forEach(function(chip){
     chip.addEventListener('click', function(){
       document.getElementById('bgModeGroup').querySelectorAll('.chip').forEach(function(c){ c.classList.remove('selected'); });
@@ -326,14 +338,16 @@ function bindEvents(){
     });
   });
 
-  document.getElementById('btnDownload').addEventListener('click', downloadImage);
+  document.getElementById('btnDownload').addEventListener('click', downloadStatic);
+  document.getElementById('btnDownloadAnim').addEventListener('click', downloadAnimation);
   document.getElementById('btnCopyLink').addEventListener('click', copyShareLink);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', function(e){
     if(e.ctrlKey && e.key === 'z'){ e.preventDefault(); undo(); }
     if(e.ctrlKey && e.key === 'y'){ e.preventDefault(); redo(); }
-    if(e.ctrlKey && e.key === 's'){ e.preventDefault(); downloadImage(); }
+    if(e.ctrlKey && e.key === 's'){ e.preventDefault(); downloadStatic(); }
+    if(e.key === ' '){ e.preventDefault(); toggleRecording(); }
   });
 }
 
@@ -368,25 +382,18 @@ function syncUI(){
   ctrlBgGrid.checked = state.bgGridEnabled;
   ctrlSyncLines.checked = state.scanlinesEnabled;
 
-  // Active chips
   document.getElementById('gradDirGroup').querySelectorAll('.chip').forEach(function(c){
     c.classList.toggle('selected', c.dataset.dir === state.gradDir);
   });
   document.getElementById('weightGroup').querySelectorAll('.chip').forEach(function(c){
     c.classList.toggle('selected', c.dataset.val === state.fontWeight);
   });
-
-  // Active shape
   document.querySelectorAll('.shape-item').forEach(function(el){
     el.classList.toggle('active', el.dataset.curve === state.curve);
   });
-
-  // Active anim
   document.querySelectorAll('.anim-item').forEach(function(el){
     el.classList.toggle('active', el.dataset.anim === state.animPreset);
   });
-
-  // Active preset highlight
   document.querySelectorAll('.preset-item').forEach(function(el){
     el.classList.remove('active');
   });
@@ -464,33 +471,13 @@ function resetAll(){
   pushHistory('Reset');
 }
 
-/* ── Snapshots ── */
-function takeSnapshot(){
-  var offscreen = document.createElement('canvas');
-  offscreen.width = 200;
-  offscreen.height = 112;
-  var octx = offscreen.getContext('2d');
-  octx.drawImage(canvas, 0, 0, 200, 112);
-
-  var container = document.getElementById('snapshotList');
-  var item = document.createElement('div');
-  item.className = 'snapshot-item';
-  item.title = 'Snapshot';
-  item.addEventListener('click', function(){
-    // Just highlight; restoring full state would need saved config
-  });
-  item.appendChild(offscreen);
-  container.insertBefore(item, container.firstChild);
-  if(container.children.length > 12) container.removeChild(container.lastChild);
-}
-
 /* ── Particles ── */
 function initParticles(count){
   particles = [];
   for(var i = 0; i < count; i++){
     particles.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
+      x: Math.random() * (canvas ? canvas.width : 800),
+      y: Math.random() * (canvas ? canvas.height : 600),
       vx: (Math.random() - 0.5) * 0.8,
       vy: (Math.random() - 0.5) * 0.8,
       size: Math.random() * 2.5 + 0.5,
@@ -578,8 +565,9 @@ function shadeColor(hex, amt){
 
 function hsl(h,s,l){ return 'hsl('+h+','+s+'%,'+l+'%)'; }
 
-/* ── Core WordArt ── */
-function renderWordArt(time){
+/* ── Render a frame at a given simulated time ── */
+// This is the CORE render function - used by both live preview and recording
+function renderFrame(simTime){
   var W = canvas.width, H = canvas.height;
   var txt = state.text;
   var fs = state.fontSize;
@@ -594,12 +582,12 @@ function renderWordArt(time){
   for(var j = 0; j < wid.length; j++) totalW += wid[j];
   totalW += state.letterSpacing * Math.max(0, ch.length - 1);
 
-  var gradShift = (time * 0.08 * state.speed) % 1;
+  var gradShift = (simTime * 0.08 * state.speed) % 1;
 
   // Animate colors for rainbow mode
   var c1 = state.col1, c2 = state.col2;
   if(state.animPreset === 'rainbow'){
-    var h1 = (time * 80 * state.speed) % 360;
+    var h1 = (simTime * 80 * state.speed) % 360;
     var h2 = (h1 + 180) % 360;
     c1 = hsl(h1, 100, 55);
     c2 = hsl(h2, 100, 55);
@@ -608,32 +596,32 @@ function renderWordArt(time){
   // Flicker multiplier
   var flickMul = 1;
   if(state.animPreset === 'flicker'){
-    flickMul = 0.8 + Math.sin(time * 12) * state.flickerIntensity + Math.sin(time * 7.3) * state.flickerIntensity;
+    flickMul = 0.8 + Math.sin(simTime * 12) * state.flickerIntensity + Math.sin(simTime * 7.3) * state.flickerIntensity;
   }
 
   // Shake offset
   var shakeX = 0, shakeY = 0;
   if(state.animPreset === 'shake'){
-    shakeX = Math.sin(time * 15 * state.speed) * 3;
-    shakeY = Math.cos(time * 13 * state.speed) * 2;
+    shakeX = Math.sin(simTime * 15 * state.speed) * 3;
+    shakeY = Math.cos(simTime * 13 * state.speed) * 2;
   }
 
   // Glitch offset
   var glitchX = 0;
   if(state.animPreset === 'glitch'){
-    if(Math.sin(time * 25) > 0.95) glitchX = (Math.random() - 0.5) * 20;
+    if(Math.sin(simTime * 25) > 0.95) glitchX = (Math.random() - 0.5) * 20;
   }
 
   // Spin rotation
   var spinRot = 0;
   if(state.animPreset === 'spin' && state.curve === 'coil'){
-    spinRot = time * 0.3 * state.speed;
+    spinRot = simTime * 0.3 * state.speed;
   }
 
   // Coil animation
   var coilRotBase = 0;
   if(state.curve === 'coil' && state.animPreset !== 'spin'){
-    coilRotBase = time * 0.15 * state.speed;
+    coilRotBase = simTime * 0.15 * state.speed;
   }
 
   for(var i = 0; i < ch.length; i++){
@@ -649,10 +637,10 @@ function renderWordArt(time){
         px = rx + wid[i]/2;
         py = H/2;
         if(state.animPreset === 'bounce'){
-          py -= Math.abs(Math.sin(time * 2 * state.speed + i * 0.4)) * state.bounceHeight;
+          py -= Math.abs(Math.sin(simTime * 2 * state.speed + i * 0.4)) * state.bounceHeight;
         }
         if(state.animPreset === 'pulse'){
-          ang = Math.sin(time * 3 * state.speed + i * 0.3) * 0.05;
+          ang = Math.sin(simTime * 3 * state.speed + i * 0.3) * 0.05;
         }
         break;
       }
@@ -672,9 +660,9 @@ function renderWordArt(time){
       }
       case 'wave': {
         var wspeed = state.speed;
-        ang = Math.sin(t * Math.PI * state.waveFreq + time * wspeed * 2) * state.curvature;
+        ang = Math.sin(t * Math.PI * state.waveFreq + simTime * wspeed * 2) * state.curvature;
         px = W/2 + (i - (ch.length-1)/2) * (wid[i]*0.6 + state.letterSpacing*0.6);
-        py = H/2 + Math.sin(t * Math.PI * state.waveFreq + time * wspeed * 2) * state.amplitude;
+        py = H/2 + Math.sin(t * Math.PI * state.waveFreq + simTime * wspeed * 2) * state.amplitude;
         break;
       }
       case 'slant': {
@@ -698,7 +686,7 @@ function renderWordArt(time){
         px = rb + wid[i]/2;
         for(var kb = 0; kb < i; kb++) rb += wid[kb] + state.letterSpacing;
         px = rb + wid[i]/2;
-        py = H/2 - Math.abs(Math.sin(time * 2 * state.speed + i * 0.4)) * state.bounceHeight;
+        py = H/2 - Math.abs(Math.sin(simTime * 2 * state.speed + i * 0.4)) * state.bounceHeight;
         break;
       }
       case 'pulse': {
@@ -707,7 +695,7 @@ function renderWordArt(time){
         for(var kp = 0; kp < i; kp++) rp += wid[kp] + state.letterSpacing;
         px = rp + wid[i]/2;
         py = H/2;
-        ang = Math.sin(time * 3 * state.speed + i * 0.3) * 0.05;
+        ang = Math.sin(simTime * 3 * state.speed + i * 0.3) * 0.05;
         break;
       }
       case 'shake': {
@@ -771,21 +759,37 @@ function renderWordArt(time){
     ctx.save();
     ctx.filter = 'blur(' + state.glowBlur + 'px)';
     ctx.globalAlpha = state.glowAlpha * flickMul;
-    redrawAll(ctx, ch, wid, totalW, time, c1, c2, gradShift, 0);
+    redrawGlowPass(simTime);
     ctx.restore();
   }
 }
 
-// Helper to redraw all glyphs (used for glow pass)
-function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
-  c.font = state.fontWeight + ' ' + state.fontSize + 'px "' + state.fontFamily + '"';
-  c.textAlign = 'center';
-  c.textBaseline = 'middle';
+function redrawGlowPass(simTime){
+  var W = canvas.width, H = canvas.height;
+  var txt = state.text;
+  var fs = state.fontSize;
+  var ch = txt.split('');
+  ctx.font = state.fontWeight + ' ' + fs + 'px "' + state.fontFamily + '"';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  var wid = ch.map(function(d){ return ctx.measureText(d).width; });
+  var totalW = 0;
+  for(var j = 0; j < wid.length; j++) totalW += wid[j];
+  totalW += state.letterSpacing * Math.max(0, ch.length - 1);
+
+  var gradShift = (simTime * 0.08 * state.speed) % 1;
+  var c1 = state.col1, c2 = state.col2;
+  if(state.animPreset === 'rainbow'){
+    var h1 = (simTime * 80 * state.speed) % 360;
+    var h2 = (h1 + 180) % 360;
+    c1 = hsl(h1, 100, 55);
+    c2 = hsl(h2, 100, 55);
+  }
 
   for(var i = 0; i < ch.length; i++){
     var px, py, ang = 0;
     var t = (i + 0.5) / ch.length;
-    var W = canvas.width, H = canvas.height;
 
     switch(state.curve){
       case 'none': {
@@ -803,9 +807,9 @@ function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
         break;
       }
       case 'wave': {
-        ang = Math.sin(t*Math.PI*state.waveFreq+time*state.speed*2)*state.curvature;
+        ang = Math.sin(t*Math.PI*state.waveFreq+simTime*state.speed*2)*state.curvature;
         px = W/2+(i-(ch.length-1)/2)*(wid[i]*0.6+state.letterSpacing*0.6);
-        py = H/2+Math.sin(t*Math.PI*state.waveFreq+time*state.speed*2)*state.amplitude;
+        py = H/2+Math.sin(t*Math.PI*state.waveFreq+simTime*state.speed*2)*state.amplitude;
         break;
       }
       case 'coil': {
@@ -823,7 +827,7 @@ function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
         px = rb+wid[i]/2;
         for(var kb=0;kb<i;kb++) rb+=wid[kb]+state.letterSpacing;
         px = rb+wid[i]/2;
-        py = H/2-Math.abs(Math.sin(time*2*state.speed+i*0.4))*state.bounceHeight;
+        py = H/2-Math.abs(Math.sin(simTime*2*state.speed+i*0.4))*state.bounceHeight;
         break;
       }
       case 'pulse': {
@@ -832,7 +836,7 @@ function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
         for(var kp=0;kp<i;kp++) rp+=wid[kp]+state.letterSpacing;
         px = rp+wid[i]/2;
         py = H/2;
-        ang = Math.sin(time*3*state.speed+i*0.3)*0.05;
+        ang = Math.sin(simTime*3*state.speed+i*0.3)*0.05;
         break;
       }
       default: {
@@ -844,26 +848,26 @@ function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
       }
     }
 
-    c.save();
-    c.translate(px, py);
-    c.rotate(ang);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(ang);
 
     var grd;
-    if(state.gradDir==='h') grd=c.createLinearGradient(-state.fontSize,0,state.fontSize,0);
-    else if(state.gradDir==='v') grd=c.createLinearGradient(0,-state.fontSize,0,state.fontSize);
-    else if(state.gradDir==='radial') grd=c.createRadialGradient(0,0,0,0,0,state.fontSize);
-    else grd=c.createLinearGradient(-state.fontSize,-state.fontSize,state.fontSize,state.fontSize);
+    if(state.gradDir==='h') grd=ctx.createLinearGradient(-fs,0,fs,0);
+    else if(state.gradDir==='v') grd=ctx.createLinearGradient(0,-fs,0,fs);
+    else if(state.gradDir==='radial') grd=ctx.createRadialGradient(0,0,0,0,0,fs);
+    else grd=ctx.createLinearGradient(-fs,-fs,fs,fs);
     grd.addColorStop(0,c1);
     grd.addColorStop(1,c2);
-    c.fillStyle=grd;
-    c.fillText(ch[i],0,0);
+    ctx.fillStyle=grd;
+    ctx.fillText(ch[i],0,0);
 
     if(state.outlineWidth>0){
-      c.strokeStyle=state.outlineColor;
-      c.lineWidth=state.outlineWidth;
-      c.strokeText(ch[i],0,0);
+      ctx.strokeStyle=state.outlineColor;
+      ctx.lineWidth=state.outlineWidth;
+      ctx.strokeText(ch[i],0,0);
     }
-    c.restore();
+    ctx.restore();
   }
 }
 
@@ -871,13 +875,10 @@ function redrawAll(c, ch, wid, totalW, time, c1, c2, gradShift, _unused){
 function drawBackground(time){
   var W = canvas.width, H = canvas.height;
 
-  // Base bg color - use preset-aware darkening
-  var bg = state.bgColor;
-  // Parse bg and darken slightly
   var r,g,b;
   try {
     var tmp = document.createElement('canvas').getContext('2d');
-    tmp.fillStyle = bg;
+    tmp.fillStyle = state.bgColor;
     tmp.fillRect(0,0,1,1);
     var data = tmp.getImageData(0,0,1,1).data;
     r=data[0]; g=data[1]; b=data[2];
@@ -889,7 +890,6 @@ function drawBackground(time){
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, W, H);
 
-  // Grid
   if(state.bgGridEnabled){
     ctx.strokeStyle = 'rgba(255,0,255,0.08)';
     ctx.lineWidth = 1;
@@ -905,10 +905,8 @@ function drawBackground(time){
       ctx.moveTo(0,gy); ctx.lineTo(W,gy);
       ctx.stroke();
     }
-  }
 
-  // Retro sun (when retro-ish)
-  if(state.bgGridEnabled){
+    // Retro sun
     var sunSize = 45 + Math.sin(time*2)*5;
     var sunG = ctx.createLinearGradient(W/2,H/2-sunSize,W/2,H/2);
     sunG.addColorStop(0,'#ff0080');
@@ -923,7 +921,6 @@ function drawBackground(time){
     }
   }
 
-  // Scanlines
   if(state.scanlinesEnabled){
     ctx.fillStyle = 'rgba(0,0,0,0.05)';
     for(var sy=0; sy<H; sy+=3){
@@ -931,11 +928,28 @@ function drawBackground(time){
     }
   }
 
-  // Flash for impact/shake
   if(state.animPreset === 'shake'){
     var flashA = Math.max(0, Math.sin(time*4*state.speed)*0.04);
     ctx.fillStyle = 'rgba(255,255,255,'+flashA+')';
     ctx.fillRect(0,0,W,H);
+  }
+}
+
+/* ── Live Recording Toggle ── */
+function toggleRecording(){
+  var btn = document.getElementById('btnRecord');
+  if(recording){
+    recording = false;
+    btn.textContent = '&#9653; Record';
+    btn.style.background = '';
+    pushHistory('Stopped recording (' + recordedFrames.length + ' frames)');
+  } else {
+    recording = true;
+    recordedFrames = [];
+    recordedStartTime = performance.now();
+    btn.textContent = '&#9632; Stop';
+    btn.style.background = '#ef5350';
+    pushHistory('Started recording');
   }
 }
 
@@ -952,22 +966,59 @@ function loop(now){
   if(now - fpsCounter.lastTime >= 1000){
     document.getElementById('infoFPS').textContent = fpsCounter.frames + ' FPS';
     document.getElementById('infoChars').textContent = state.text.length + ' chars';
+    if(recording){
+      document.getElementById('infoChars').textContent += ' | REC ' + recordedFrames.length;
+    }
     fpsCounter.frames = 0;
     fpsCounter.lastTime = now;
   }
 
   drawBackground(time);
   drawParticles(time);
-  renderWordArt(time);
+  renderFrame(time);
+
+  // Capture frame during recording
+  if(recording){
+    var img = canvas.toDataURL('image/png', 0.92);
+    recordedFrames.push(img);
+  }
 
   requestAnimationFrame(loop);
 }
 
-/* ── Export / Download ── */
-function downloadImage(){
+/* ── Export Options UI update ── */
+function updateExportOptions(){
+  var format = document.getElementById('formatGroup').querySelector('.chip.selected').dataset.format;
+  var animSection = document.getElementById('animExportSection');
+  var animBtn = document.getElementById('btnDownloadAnim');
+  var scaleField = document.getElementById('scaleField');
+  var bgField = document.getElementById('bgField');
+
+  if(format === 'gif' || format === 'mp4'){
+    animSection.style.display = 'block';
+    animBtn.style.display = 'block';
+    document.getElementById('btnDownload').style.display = 'none';
+    scaleField.style.display = 'none';
+    bgField.style.display = 'none';
+  } else {
+    animSection.style.display = 'none';
+    animBtn.style.display = 'none';
+    document.getElementById('btnDownload').style.display = 'block';
+    scaleField.style.display = 'block';
+    bgField.style.display = 'block';
+  }
+}
+
+/* ── Static Download ── */
+function downloadStatic(){
   var format = document.getElementById('formatGroup').querySelector('.chip.selected').dataset.format;
   var scale = +document.getElementById('scaleGroup').querySelector('.chip.selected').dataset.scale;
   var bgMode = document.getElementById('bgModeGroup').querySelector('.chip.selected').dataset.bg;
+
+  if(['gif','webp-anim','mp4'].includes(format)){
+    downloadAnimation();
+    return;
+  }
 
   var mimeTypes = { png:'image/png', jpg:'image/jpeg', webp:'image/webp' };
   var ext = format === 'jpg' ? 'jpeg' : format;
@@ -977,10 +1028,7 @@ function downloadImage(){
   offscreen.height = canvas.height * scale;
   var octx = offscreen.getContext('2d');
 
-  // Handle transparency
   if(bgMode === 'transparent'){
-    // Draw only the text portion
-    // For simplicity, we draw the current canvas
     octx.drawImage(canvas, 0, 0, offscreen.width, offscreen.height);
   } else if(bgMode === 'dark'){
     octx.fillStyle = '#0a0a14';
@@ -995,13 +1043,204 @@ function downloadImage(){
   }
 
   var link = document.createElement('a');
-  link.download = 'wordart.' + format;
+  link.download = 'wordart.' + ext;
   link.href = offscreen.toDataURL(mimeTypes[format], 0.95);
   link.click();
 
   document.getElementById('modalBackdrop').classList.remove('open');
   pushHistory('Export: ' + format.toUpperCase() + ' ' + scale + 'x');
 }
+
+/* ── Animation Recording & Export ── */
+async function recordAndExport(durationSec, fps){
+  var totalFrames = Math.ceil(durationSec * fps);
+  var frameInterval = 1000 / fps;
+  var frames = [];
+
+  pushHistory('Rendering ' + totalFrames + ' frames at ' + fps + 'fps...');
+
+  for(var i = 0; i < totalFrames; i++){
+    var simTime = i / fps;
+
+    // Render to offscreen canvas
+    var offscreen = document.createElement('canvas');
+    offscreen.width = canvas.width;
+    offscreen.height = canvas.height;
+    var octx = offscreen.getContext('2d');
+
+    // Swap ctx temporarily
+    var origCtx = ctx;
+    // We need to use the same rendering but on offscreen canvas
+    // Since our render functions use global ctx, we swap:
+    var savedCtx = window.ctx_backup || ctx;
+
+    // Actually, let's just save the state and render normally
+    // But use the offscreen canvas
+    // The simplest approach: render to offscreen, capture, restore main canvas
+    // We need to make ctx point to octx temporarily
+
+    // Better approach: duplicate the render pipeline to accept a context param
+    // For now, since renderFrame uses global ctx, let's use a different strategy:
+    // Render to main canvas (hidden from user during export), then capture
+
+    // Actually best approach: save, swap, render, capture, restore
+    // But particles mutate state. Let's just render directly to main canvas.
+
+    // Simplest: render to main canvas at simTime, capture, then restore live view
+    drawBackground(simTime);
+    drawParticles(simTime);
+    renderFrame(simTime);
+
+    frames.push(canvas.toDataURL('image/png', 0.92));
+
+    // Show progress
+    var pct = Math.round(i / totalFrames * 100);
+    document.getElementById('infoFPS').textContent = 'Exporting ' + pct + '%';
+  }
+
+  // Restore live view
+  requestAnimationFrame(function(){
+    drawBackground(performance.now()/1000 - startTime/1000);
+    drawParticles(performance.now()/1000 - startTime/1000);
+    renderFrame((performance.now() - startTime) / 1000);
+  });
+
+  return frames;
+}
+
+async function downloadAnimation(){
+  var format = document.getElementById('formatGroup').querySelector('.chip.selected').dataset.format;
+  var duration = +document.getElementById('ctrlDuration').value;
+  var fps = +document.getElementById('ctrlFPS').value;
+
+  document.getElementById('modalBackdrop').classList.remove('open');
+  pushHistory('Starting ' + format + ' export...');
+
+  if(format === 'gif'){
+    exportGIF(duration, fps);
+  } else if(format === 'mp4'){
+    exportVideo(duration, fps);
+  }
+}
+window.downloadAnimation = downloadAnimation;
+
+/* ── GIF Export ── */
+async function exportGIF(duration, fps){
+  if(!window.GIF || !window._gifReady){
+    pushHistory('Error: gif.js library not loaded yet. Please wait and try again.');
+    return;
+  }
+
+  var totalFrames = Math.ceil(duration * fps);
+  var gif = new GIF({
+    workers: 2,
+    quality: 10,
+    width: canvas.width,
+    height: canvas.height,
+    workerScript: 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js'
+  });
+
+  pushHistory('Rendering GIF: ' + totalFrames + ' frames...');
+
+  for(var i = 0; i < totalFrames; i++){
+    var simTime = i / fps;
+
+    drawBackground(simTime);
+    drawParticles(simTime);
+    renderFrame(simTime);
+
+    var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    gif.addFrame(imgData, {delay: 1000/fps});
+
+    var pct = Math.round(i / totalFrames * 100);
+    document.getElementById('infoFPS').textContent = 'GIF ' + pct + '%';
+  }
+
+  gif.on('finished', function(blob){
+    document.getElementById('infoFPS').textContent = '60 FPS';
+    var link = document.createElement('a');
+    link.download = 'wordart.gif';
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    pushHistory('GIF exported (' + Math.round(blob.size/1024) + 'KB)');
+  });
+
+  gif.render();
+}
+
+/* ── MP4/Video Export ── */
+async function exportVideo(duration, fps){
+  var totalFrames = Math.ceil(duration * fps);
+
+  // Use MediaRecorder with OffscreenCanvas if available, otherwise stream capture
+  // Approach: render all frames to a MediaStream via canvas.captureStream
+  var stream = canvas.captureStream(fps);
+
+  // Check supported MIME types
+  var mimeType = 'video/webm;codecs=vp9';
+  if(MediaRecorder.isTypeSupported('video/mp4')){
+    mimeType = 'video/mp4';
+  } else if(MediaRecorder.isTypeSupported('video/webm;codecs=h264')){
+    mimeType = 'video/webm;codecs=h264';
+  } else if(MediaRecorder.isTypeSupported('video/webm')){
+    mimeType = 'video/webm';
+  }
+
+  var recorder = new MediaRecorder(stream, {
+    mimeType: mimeType,
+    videoBitsPerSecond: 5000000
+  });
+
+  var chunks = [];
+  recorder.ondataavailable = function(e){
+    if(e.data.size > 0) chunks.push(e.data);
+  };
+
+  recorder.onstop = function(){
+    document.getElementById('infoFPS').textContent = '60 FPS';
+    var blob = new Blob(chunks, {type: mimeType});
+    var ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    var link = document.createElement('a');
+    link.download = 'wordart.' + ext;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    pushHistory('Video exported: ' + ext.toUpperCase() + ' (' + Math.round(blob.size/1024) + 'KB)');
+  };
+
+  recorder.start();
+
+  // Render frames at precise timing
+  var frameDelay = 1000 / fps;
+  var frameIndex = 0;
+
+  pushHistory('Rendering video: ' + totalFrames + ' frames...');
+
+  function renderNextFrame(){
+    if(frameIndex >= totalFrames){
+      recorder.stop();
+      return;
+    }
+
+    var simTime = frameIndex / fps;
+
+    drawBackground(simTime);
+    drawParticles(simTime);
+    renderFrame(simTime);
+
+    frameIndex++;
+
+    var pct = Math.round(frameIndex / totalFrames * 100);
+    document.getElementById('infoFPS').textContent = 'Video ' + pct + '%';
+
+    setTimeout(renderNextFrame, frameDelay);
+  }
+
+  // Start rendering after recorder is ready
+  setTimeout(renderNextFrame, 100);
+}
+
 
 /* ── Share ── */
 function shareConfig(){
