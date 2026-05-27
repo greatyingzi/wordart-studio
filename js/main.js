@@ -1370,112 +1370,21 @@ function renderFrameToCanvas(targetCtx, W, H, simTime){
 
   // Glow pass
   if(state.glowEnabled && state.glowBlur > 0){
+    var flickMul2 = 1;
+    if(state.animPreset === 'flicker'){
+      flickMul2 = 0.8 + Math.sin(simTime * 12) * state.flickerIntensity + Math.sin(simTime * 7.3) * state.flickerIntensity;
+    }
     targetCtx.save();
     targetCtx.filter = 'blur(' + state.glowBlur + 'px)';
-    targetCtx.globalAlpha = state.glowAlpha * flickMul;
+    targetCtx.globalAlpha = state.glowAlpha * flickMul2;
     renderGlowPassOnCtx(targetCtx, W, H, simTime);
+    targetCtx.globalAlpha = 1;
+    targetCtx.filter = 'none';
     targetCtx.restore();
   }
 }
 
-function renderBGOnCtx(targetCtx, W, H, time){
-  var r,g,b;
-  try {
-    var tmp = document.createElement('canvas').getContext('2d');
-    tmp.fillStyle = state.bgColor;
-    tmp.fillRect(0,0,1,1);
-    var data = tmp.getImageData(0,0,1,1).data;
-    r=data[0]; g=data[1]; b=data[2];
-  } catch(e) { r=10; g=10; b=20; }
-
-  var bgGrad = targetCtx.createRadialGradient(W/2,H/2,0,W/2,H/2,W/2);
-  bgGrad.addColorStop(0, 'rgb('+Math.round(r*1.2)+','+Math.round(g*1.2)+','+Math.round(b*1.2)+')');
-  bgGrad.addColorStop(1, 'rgb('+Math.round(r*0.5)+','+Math.round(g*0.5)+','+Math.round(b*0.5)+')');
-  targetCtx.fillStyle = bgGrad;
-  targetCtx.fillRect(0, 0, W, H);
-
-  if(state.bgGridEnabled){
-    targetCtx.strokeStyle = 'rgba(255,0,255,0.08)';
-    targetCtx.lineWidth = 1;
-    var gridOff = (time * 15 * state.speed) % 12;
-    for(var gx=0; gx<W; gx+=25){
-      targetCtx.beginPath();
-      targetCtx.moveTo(gx, H/2+10);
-      targetCtx.lineTo(gx-(gx-W/2)*0.4, H);
-      targetCtx.stroke();
-    }
-    for(var gy=H/2+10+gridOff; gy<H; gy+=12){
-      targetCtx.beginPath();
-      targetCtx.moveTo(0,gy); targetCtx.lineTo(W,gy);
-      targetCtx.stroke();
-    }
-    var sunSize = 45 + Math.sin(time*2)*5;
-    var sunG = targetCtx.createLinearGradient(W/2,H/2-sunSize,W/2,H/2);
-    sunG.addColorStop(0,'#ff0080');
-    sunG.addColorStop(1,'#ffdd00');
-    targetCtx.fillStyle = sunG;
-    targetCtx.beginPath();
-    targetCtx.arc(W/2, H/2-20, sunSize, 0, Math.PI);
-    targetCtx.fill();
-    for(var sl=H/2-20; sl<H/2-20+sunSize; sl+=5){
-      targetCtx.fillStyle='rgba(10,0,21,0.5)';
-      targetCtx.fillRect(W/2-sunSize, sl, sunSize*2, 2);
-    }
-  }
-
-  if(state.scanlinesEnabled){
-    targetCtx.fillStyle = 'rgba(0,0,0,0.05)';
-    for(var sy=0; sy<H; sy+=3){
-      targetCtx.fillRect(0, sy, W, 1);
-    }
-  }
-
-  if(state.animPreset === 'shake'){
-    var flashA = Math.max(0, Math.sin(time*4*state.speed)*0.04);
-    targetCtx.fillStyle = 'rgba(255,255,255,'+flashA+')';
-    targetCtx.fillRect(0,0,W,H);
-  }
-}
-
-/* ── Full frame render to arbitrary canvas ── */
-function renderFullFrame(targetCanvas, simTime){
-  var tc = targetCanvas.getContext('2d');
-  var W = targetCanvas.width;
-  var H = targetCanvas.height;
-
-  renderBGOnCtx(tc, W, H, simTime);
-
-  // Particles (seeded by time for determinism)
-  if(state.particlesEnabled){
-    for(var i = 0; i < Math.min(state.particleCount, 60); i++){
-      var seed = i * 137.508 + simTime * 50;
-      var px = ((seed * 7.31) % W + W) % W;
-      var py = ((seed * 13.7) % H + H) % H;
-      var sz = 1 + (seed % 2);
-      var alpha = 0.15 + Math.sin(seed * 0.3) * 0.15;
-      if(state.particleType === 'embers'){
-        alpha = 0.2 + Math.sin(seed * 0.5) * 0.15;
-      } else if(state.particleType === 'snow'){
-        alpha = 0.25 + Math.sin(seed * 0.2) * 0.1;
-      }
-      tc.fillStyle = 'rgba(200,230,255,' + alpha.toFixed(2) + ')';
-      if(state.particleType === 'embers'){
-        tc.fillStyle = 'rgba(255,' + Math.round(120+Math.sin(seed)*60) + ',0,' + alpha.toFixed(2) + ')';
-      }
-      if(state.particleType === 'stars'){
-        drawStar(tc, px, py, 4, sz, sz*0.6, 'rgba(255,255,255,' + alpha.toFixed(2) + ')');
-      } else {
-        tc.beginPath();
-        tc.arc(px, py, sz, 0, Math.PI*2);
-        tc.fill();
-      }
-    }
-  }
-
-  renderFrameToCanvas(tc, W, H, simTime);
-}
-
-/* ── GIF Export (non-blocking) ── */
+/* ── GIF Export (on main canvas with yields) ── */
 async function exportGIF(duration, fps){
   if(!window.GIF || !window._gifReady){
     pushHistory('Error: gif.js library not loaded yet. Please wait and try again.');
@@ -1488,10 +1397,6 @@ async function exportGIF(duration, fps){
   showProgress('Generating GIF...');
   updateProgress(0, totalFrames, 'Preparing...');
 
-  var offscreen = document.createElement('canvas');
-  offscreen.width = W;
-  offscreen.height = H;
-
   var gif = new GIF({
     workers: 2,
     quality: 10,
@@ -1500,17 +1405,28 @@ async function exportGIF(duration, fps){
     workerScript: 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js'
   });
 
+  // Pause live animation during export
+  var prevLoopRef = loopRef;
+
   for(var i = 0; i < totalFrames; i++){
     var simTime = i / fps;
-    renderFullFrame(offscreen, simTime);
-    var imgData = offscreen.getContext('2d').getImageData(0, 0, W, H);
+
+    // Render directly to main canvas (temporarily replaces live view)
+    drawBackground(simTime);
+    drawParticles(simTime);
+    renderFrame(simTime);
+
+    var imgData = ctx.getImageData(0, 0, W, H);
     gif.addFrame(imgData, {delay: 1000/fps});
 
     updateProgress(i + 1, totalFrames, 'Frame ' + (i+1) + '/' + totalFrames);
 
-    // Yield every 5 frames to prevent blocking
-    if(i % 5 === 4) await yieldMs(0);
+    // Yield every 3 frames to prevent blocking
+    if(i % 3 === 2) await yieldMs(0);
   }
+
+  // Restore live view
+  renderFrame((performance.now() - startTime) / 1000);
 
   updateProgress(totalFrames, totalFrames, 'Encoding GIF...');
 
@@ -1527,7 +1443,7 @@ async function exportGIF(duration, fps){
   gif.render();
 }
 
-/* ── MP4/Video Export (non-blocking via offscreen canvas) ── */
+/* ── MP4/Video Export (via main canvas captureStream + frame-by-frame) ── */
 async function exportVideo(duration, fps){
   var totalFrames = Math.ceil(duration * fps);
   var W = canvas.width, H = canvas.height;
@@ -1535,7 +1451,6 @@ async function exportVideo(duration, fps){
   showProgress('Generating Video...');
   updateProgress(0, totalFrames, 'Preparing...');
 
-  // Determine mime type
   var mimeType = 'video/webm;codecs=vp9';
   if(MediaRecorder.isTypeSupported('video/mp4')){
     mimeType = 'video/mp4';
@@ -1545,12 +1460,7 @@ async function exportVideo(duration, fps){
     mimeType = 'video/webm';
   }
 
-  // Use offscreen canvas for recording
-  var offscreen = document.createElement('canvas');
-  offscreen.width = W;
-  offscreen.height = H;
-
-  var stream = offscreen.captureStream(fps);
+  var stream = canvas.captureStream(fps);
   var recorder = new MediaRecorder(stream, {
     mimeType: mimeType,
     videoBitsPerSecond: 5000000
@@ -1579,50 +1489,25 @@ async function exportVideo(duration, fps){
 
   function renderNextFrame(){
     if(frameIndex >= totalFrames){
-      // Small delay to let recorder flush remaining data
-      setTimeout(function(){ recorder.stop(); }, 200);
+      // Restore live view
+      renderFrame((performance.now() - startTime) / 1000);
+      setTimeout(function(){ recorder.stop(); }, 300);
       return;
     }
 
     var simTime = frameIndex / fps;
-    renderFullFrame(offscreen, simTime);
+    drawBackground(simTime);
+    drawParticles(simTime);
+    renderFrame(simTime);
 
     frameIndex++;
     updateProgress(frameIndex, totalFrames, 'Frame ' + frameIndex + '/' + totalFrames);
 
-    // Yield every 3 frames
-    if(frameIndex % 3 === 0){
-      setTimeout(renderNextFrame, 0);
-    } else {
-      renderNextFrame();
-    }
+    // Always yield: next frame on timer at ~frame rate
+    setTimeout(renderNextFrame, 1000 / fps);
   }
 
   setTimeout(renderNextFrame, 50);
-}
-
-/* ── Animation Recording & Export ── */
-async function recordAndExport(durationSec, fps){
-  var totalFrames = Math.ceil(durationSec * fps);
-  var frames = [];
-
-  showProgress('Rendering...');
-  updateProgress(0, totalFrames, 'Preparing...');
-
-  var offscreen = document.createElement('canvas');
-  offscreen.width = canvas.width;
-  offscreen.height = canvas.height;
-
-  for(var i = 0; i < totalFrames; i++){
-    var simTime = i / fps;
-    renderFullFrame(offscreen, simTime);
-    frames.push(offscreen.toDataURL('image/png', 0.92));
-    updateProgress(i + 1, totalFrames);
-    if(i % 5 === 4) await yieldMs(0);
-  }
-
-  hideProgress();
-  return frames;
 }
 
 
