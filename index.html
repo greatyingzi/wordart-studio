@@ -64,11 +64,11 @@
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Font Size <span id="valSize">56</span></label>
+          <label>Font Size <span class="value-badge" id="valSize">56</span></label>
           <input type="range" id="ctrlSize" min="16" max="120" value="56">
         </div>
         <div class="field">
-          <label>Letter Spacing <span id="valLSpace">4</span></label>
+          <label>Letter Spacing <span class="value-badge" id="valLSpace">4</span></label>
           <input type="range" id="ctrlLSpace" min="-10" max="30" value="4">
         </div>
       </div>
@@ -103,12 +103,12 @@
           <input type="color" id="ctrlOutline" value="#000000">
         </div>
         <div class="field">
-          <label>Outline Width <span id="valOWidth">2</span></label>
+          <label>Outline Width <span class="value-badge" id="valOWidth">2</span></label>
           <input type="range" id="ctrlOWidth" min="0" max="10" value="2" step="0.5">
         </div>
       </div>
       <div class="field">
-        <label>Extrusion Depth <span id="valDepth">10</span></label>
+        <label>Extrusion Depth <span class="value-badge" id="valDepth">10</span></label>
         <input type="range" id="ctrlDepth" min="0" max="25" value="10">
       </div>
       <div class="field">
@@ -129,23 +129,23 @@
         <div class="shape-grid" id="shapeGrid"></div>
       </div>
       <div class="field">
-        <label>Curvature <span id="valCurv">0.50</span></label>
+        <label>Curvature <span class="value-badge" id="valCurv">0.50</span></label>
         <input type="range" id="ctrlCurv" min="0" max="1" value="0.5" step="0.05">
       </div>
       <div class="field">
-        <label>Amplitude <span id="valAmp">40</span></label>
+        <label>Amplitude <span class="value-badge" id="valAmp">40</span></label>
         <input type="range" id="ctrlAmp" min="0" max="120" value="40">
       </div>
       <div class="field">
-        <label>Rotation Offset <span id="valRotOff">0</span>&deg;</label>
+        <label>Rotation Offset <span class="value-badge" id="valRotOff">0</span>&deg;</label>
         <input type="range" id="ctrlRotOff" min="-180" max="180" value="0">
       </div>
       <div class="field">
-        <label>Coil Radius <span id="valRad">120</span></label>
+        <label>Coil Radius <span class="value-badge" id="valRad">120</span></label>
         <input type="range" id="ctrlRad" min="40" max="250" value="120">
       </div>
       <div class="field">
-        <label>Coil Sweep <span id="valSweep">180</span>&deg;</label>
+        <label>Coil Sweep <span class="value-badge" id="valSweep">180</span>&deg;</label>
         <input type="range" id="ctrlSweep" min="30" max="540" value="180">
       </div>
     </div>
@@ -158,19 +158,19 @@
       </div>
       <hr>
       <div class="field">
-        <label>Speed <span id="valSpeed">1.0</span>x</label>
+        <label>Speed <span class="value-badge" id="valSpeed">1.0</span>x</label>
         <input type="range" id="ctrlSpeed" min="0" max="3" value="1" step="0.1">
       </div>
       <div class="field">
-        <label>Wave Frequency <span id="valFreq">3</span></label>
+        <label>Wave Frequency <span class="value-badge" id="valFreq">3</span></label>
         <input type="range" id="ctrlFreq" min="1" max="8" value="3" step="0.5">
       </div>
       <div class="field">
-        <label>Bounce Height <span id="valBounce">12</span></label>
+        <label>Bounce Height <span class="value-badge" id="valBounce">12</span></label>
         <input type="range" id="ctrlBounce" min="0" max="40" value="12">
       </div>
       <div class="field">
-        <label>Flicker Intensity <span id="valFlick">0.15</span></label>
+        <label>Flicker Intensity <span class="value-badge" id="valFlick">0.15</span></label>
         <input type="range" id="ctrlFlick" min="0" max="0.5" value="0.15" step="0.01">
       </div>
     </div>
@@ -181,11 +181,11 @@
         <label><input type="checkbox" id="ctrlGlow" checked> Glow Effect</label>
       </div>
       <div class="field">
-        <label>Glow Blur <span id="valGBlur">15</span></label>
+        <label>Glow Blur <span class="value-badge" id="valGBlur">15</span></label>
         <input type="range" id="ctrlGBlur" min="0" max="60" value="15">
       </div>
       <div class="field">
-        <label>Glow Opacity <span id="valGAlpha">0.25</span></label>
+        <label>Glow Opacity <span class="value-badge" id="valGAlpha">0.25</span></label>
         <input type="range" id="ctrlGAlpha" min="0" max="0.8" value="0.25" step="0.01">
       </div>
       <hr>
@@ -202,7 +202,7 @@
         </select>
       </div>
       <div class="field">
-        <label>Particle Count <span id="valPCnt">40</span></label>
+        <label>Particle Count <span class="value-badge" id="valPCnt">40</span></label>
         <input type="range" id="ctrlPCnt" min="0" max="100" value="40">
       </div>
       <hr>
@@ -254,11 +254,11 @@
       <div id="animExportSection" style="display:none;">
         <div class="field-row">
           <div class="field">
-            <label>Duration <span id="valDuration">3</span>s</label>
+            <label>Duration <span class="value-badge" id="valDuration">3</span>s</label>
             <input type="range" id="ctrlDuration" min="1" max="10" value="3" step="0.5">
           </div>
           <div class="field">
-            <label>FPS <span id="valFPS">30</span></label>
+            <label>FPS <span class="value-badge" id="valFPS">30</span></label>
             <input type="range" id="ctrlFPS" min="10" max="60" value="30" step="5">
           </div>
         </div>
